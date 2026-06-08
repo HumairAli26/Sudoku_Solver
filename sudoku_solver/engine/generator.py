@@ -1,40 +1,45 @@
 """
 engine/generator.py
-Generates valid Sudoku puzzles with guaranteed unique solutions.
+Generates valid Sudoku puzzles for sizes: 4x4, 6x6, 9x9, 12x12, 16x16.
 """
-
 import random
 import copy
 
 
 class SudokuGenerator:
-    DIFFICULTY_CLUES = {
-        "Easy":   {"min": 36, "max": 45},
-        "Medium": {"min": 27, "max": 35},
-        "Hard":   {"min": 22, "max": 26},
-        "Expert": {"min": 17, "max": 21},
+    # (box_h, box_w) for each N
+    SIZE_BOXES = {4: (2,2), 6: (2,3), 9: (3,3), 12: (3,4), 16: (4,4)}
+
+    DIFFICULTY_CLUE_RATIO = {
+        "Easy":   (0.55, 0.65),
+        "Medium": (0.40, 0.54),
+        "Hard":   (0.30, 0.39),
+        "Expert": (0.20, 0.29),
     }
 
-    def generate(self, difficulty: str = "Medium"):
-        """Return (puzzle, solution) as 9×9 lists of ints (0 = empty)."""
+    def generate(self, difficulty: str = "Medium", size: int = 9):
+        """Return (puzzle, solution) as N×N lists of ints (0 = empty)."""
+        self.N = size
+        self.box_h, self.box_w = self.SIZE_BOXES.get(size, (3, 3))
+        self.values = list(range(1, size + 1))
+
         grid = self._generate_full_grid()
         solution = copy.deepcopy(grid)
-        clue_range = self.DIFFICULTY_CLUES.get(difficulty, self.DIFFICULTY_CLUES["Medium"])
-        target_clues = random.randint(clue_range["min"], clue_range["max"])
+        lo, hi = self.DIFFICULTY_CLUE_RATIO.get(difficulty, (0.40, 0.54))
+        total = size * size
+        target_clues = random.randint(int(lo * total), int(hi * total))
         puzzle = self._remove_cells(grid, target_clues)
         return puzzle, solution
 
-    # ── internals ──────────────────────────────────────────────────────────────
-
     def _generate_full_grid(self):
-        grid = [[0] * 9 for _ in range(9)]
+        grid = [[0] * self.N for _ in range(self.N)]
         self._fill_grid(grid)
         return grid
 
     def _fill_grid(self, grid):
-        nums = list(range(1, 10))
-        for i in range(81):
-            r, c = divmod(i, 9)
+        nums = self.values[:]
+        for i in range(self.N * self.N):
+            r, c = divmod(i, self.N)
             if grid[r][c] == 0:
                 random.shuffle(nums)
                 for n in nums:
@@ -49,25 +54,26 @@ class SudokuGenerator:
     def _is_valid(self, grid, row, col, num):
         if num in grid[row]:
             return False
-        if num in [grid[r][col] for r in range(9)]:
+        if num in [grid[r][col] for r in range(self.N)]:
             return False
-        br, bc = 3 * (row // 3), 3 * (col // 3)
-        for r in range(br, br + 3):
-            for c in range(bc, bc + 3):
+        br = self.box_h * (row // self.box_h)
+        bc = self.box_w * (col // self.box_w)
+        for r in range(br, br + self.box_h):
+            for c in range(bc, bc + self.box_w):
                 if grid[r][c] == num:
                     return False
         return True
 
     def _remove_cells(self, grid, target_clues):
         puzzle = copy.deepcopy(grid)
-        cells = list(range(81))
+        cells = list(range(self.N * self.N))
         random.shuffle(cells)
         removed = 0
-        target_remove = 81 - target_clues
+        target_remove = self.N * self.N - target_clues
         for idx in cells:
             if removed >= target_remove:
                 break
-            r, c = divmod(idx, 9)
+            r, c = divmod(idx, self.N)
             backup = puzzle[r][c]
             puzzle[r][c] = 0
             test = copy.deepcopy(puzzle)
@@ -78,10 +84,10 @@ class SudokuGenerator:
         return puzzle
 
     def _count_solutions(self, grid, count=0):
-        for i in range(81):
-            r, c = divmod(i, 9)
+        for i in range(self.N * self.N):
+            r, c = divmod(i, self.N)
             if grid[r][c] == 0:
-                for n in range(1, 10):
+                for n in self.values:
                     if self._is_valid(grid, r, c, n):
                         grid[r][c] = n
                         count = self._count_solutions(grid, count)

@@ -1,7 +1,3 @@
-"""
-app.py
-Main application window — wires the grid, sidebar, animator, and engines.
-"""
 
 import tkinter as tk
 from tkinter import messagebox
@@ -18,9 +14,9 @@ class App(tk.Tk):
         super().__init__()
         self.title(APP_TITLE)
         self.configure(bg=BG)
-        self.resizable(False, False)
+        self.resizable(True, True)
 
-        # state
+        self._size     = 9
         self._puzzle   = [[0]*9 for _ in range(9)]
         self._solution = None
         self._given    = set()
@@ -35,29 +31,35 @@ class App(tk.Tk):
 
     def _build_ui(self):
         # ── left: grid area ──────────────────────────────────────────────────
-        left = tk.Frame(self, bg=BG, padx=20, pady=20)
-        left.pack(side=tk.LEFT, fill=tk.BOTH)
+        self._left = tk.Frame(self, bg=BG, padx=20, pady=20)
+        self._left.pack(side=tk.LEFT, fill=tk.BOTH)
 
-        self._grid = GridWidget(left, on_cell_edit=self._on_cell_edit)
+        self._grid = GridWidget(self._left, on_cell_edit=self._on_cell_edit,
+                                size=9)
         self._grid.pack()
 
-        # legend row
-        leg = tk.Frame(left, bg=BG)
-        leg.pack(fill=tk.X, pady=(8, 0))
+        # colour legend
+        leg = tk.Frame(self._left, bg=BG)
+        leg.pack(fill=tk.X, pady=(10, 0))
         for col, label in [(ACTIVE_FG, "Place"), (REMOVE_FG, "Backtrack"),
-                            (SWAP_FG, "SA Swap"), (SOLVED_FG, "Solved"),
+                            (SWAP_FG, "SA Swap"),  (SOLVED_FG, "Solved"),
                             (GIVEN_FG, "Clue")]:
-            tk.Label(leg, text="●", fg=col, bg=BG, font=("Consolas", 11)).pack(side=tk.LEFT, padx=(4,1))
-            tk.Label(leg, text=label, fg=SUBTEXT, bg=BG, font=FONT_MONO).pack(side=tk.LEFT, padx=(0,6))
+            tk.Label(leg, text="●", fg=col, bg=BG,
+                     font=("Consolas", 12)).pack(side=tk.LEFT, padx=(4,1))
+            tk.Label(leg, text=label, fg=SUBTEXT, bg=BG,
+                     font=("Consolas", 9)).pack(side=tk.LEFT, padx=(0,8))
 
         # status bar
         self._status_var = tk.StringVar()
-        tk.Label(left, textvariable=self._status_var,
-                 font=FONT_MONO, bg=BG, fg=MUTED,
-                 wraplength=540, justify=tk.LEFT, anchor=tk.W).pack(fill=tk.X, pady=(4,0))
+        self._status_lbl = tk.Label(
+            self._left, textvariable=self._status_var,
+            font=("Consolas", 9), bg=BG, fg=TEAL,
+            wraplength=620, justify=tk.LEFT, anchor=tk.W)
+        self._status_lbl.pack(fill=tk.X, pady=(6, 0))
 
         # ── right: sidebar ────────────────────────────────────────────────────
-        self._sidebar = Sidebar(self,
+        self._sidebar = Sidebar(
+            self,
             on_generate    = self._on_generate,
             on_solve       = self._on_solve,
             on_solve_all   = self._on_solve_all,
@@ -66,23 +68,44 @@ class App(tk.Tk):
             on_play_pause  = self._on_play_pause,
             on_step        = self._on_step,
             on_speed_change= self._on_speed_change,
+            on_size_change = self._on_size_change,
         )
         self._sidebar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    # ── size change ───────────────────────────────────────────────────────────
+
+    def _on_size_change(self, new_size):
+        if new_size == self._size:
+            return
+        self._stop_animator()
+        self._size = new_size
+        # Rebuild grid widget
+        self._grid.destroy()
+        self._grid = GridWidget(self._left, on_cell_edit=self._on_cell_edit,
+                                size=new_size)
+        self._grid.pack(before=self._status_lbl)
+        # Reset state
+        self._puzzle   = [[0]*new_size for _ in range(new_size)]
+        self._solution = None
+        self._given    = set()
+        self._last_result = None
+        self._status(f"Grid changed to {new_size}×{new_size} — generate a new puzzle.")
+        # Auto-generate
+        self._on_generate(self._sidebar._diff_var.get())
 
     # ── callbacks ─────────────────────────────────────────────────────────────
 
     def _on_cell_edit(self, r, c, val):
-        # user typed into a cell manually — mark as given for solving
         pass
 
     def _on_generate(self, difficulty):
         self._stop_animator()
         self._sidebar.set_generating(True)
-        self._status(f"Generating {difficulty} puzzle…")
+        self._status(f"Generating {difficulty} {self._size}×{self._size} puzzle…")
 
         def _gen():
             gen = SudokuGenerator()
-            puzzle, solution = gen.generate(difficulty)
+            puzzle, solution = gen.generate(difficulty, size=self._size)
             self.after(0, lambda: self._finish_generate(puzzle, solution))
 
         threading.Thread(target=_gen, daemon=True).start()
@@ -90,21 +113,20 @@ class App(tk.Tk):
     def _finish_generate(self, puzzle, solution):
         self._puzzle   = puzzle
         self._solution = solution
-        self._given    = {(r,c) for r in range(9) for c in range(9) if puzzle[r][c] != 0}
+        N = len(puzzle)
+        self._given = {(r,c) for r in range(N) for c in range(N) if puzzle[r][c] != 0}
         self._grid.load_puzzle(puzzle, self._given)
         self._sidebar.set_generating(False)
-        self._status(f"Puzzle ready. Choose an algorithm and press Solve & Animate.")
+        self._status(f"Puzzle ready ({N}×{N}). Choose an algorithm and press Solve & Animate.")
 
     def _on_solve(self, algorithm):
         self._stop_animator()
         grid = self._grid.get_grid()
-
-        # gather given from current board
-        self._given = {(r,c) for r in range(9) for c in range(9) if grid[r][c] != 0}
-        self._grid.load_puzzle(grid, self._given)  # reset colours
-
+        self._given = {(r,c) for r in range(self._size) for c in range(self._size)
+                       if grid[r][c] != 0}
+        self._grid.load_puzzle(grid, self._given)
         self._sidebar.set_solving(True)
-        self._status(f"Running {algorithm}…")
+        self._status(f"Running {algorithm} on {self._size}×{self._size}…")
 
         def _run():
             solver = SudokuSolver(grid)
@@ -116,7 +138,7 @@ class App(tk.Tk):
     def _finish_solve(self, result):
         self._sidebar.set_solving(False)
         self._last_result = result
-        self._sidebar.update_stats(result)
+        self._sidebar.update_stats(result, size=self._size)
 
         if not result["solved"]:
             messagebox.showwarning("Unsolvable",
@@ -127,9 +149,9 @@ class App(tk.Tk):
 
         step_count = len(result["steps"])
         self._status(
-            f"Solved in {result['time_ms']} ms · "
-            f"{result['states_explored']:,} states · "
-            f"{result['backtracks']:,} backtracks · "
+            f"Solved in {result['time_ms']} ms  ·  "
+            f"{result['states_explored']:,} states  ·  "
+            f"{result['backtracks']:,} backtracks  ·  "
             f"{step_count:,} recorded steps → animating…"
         )
         self._sidebar.update_progress(0, step_count)
@@ -138,8 +160,10 @@ class App(tk.Tk):
     def _on_solve_all(self):
         self._stop_animator()
         grid = self._grid.get_grid()
-        self._given = {(r,c) for r in range(9) for c in range(9) if grid[r][c] != 0}
-        self._status("Running all 4 algorithms…")
+        self._given = {(r,c) for r in range(self._size) for c in range(self._size)
+                       if grid[r][c] != 0}
+        self._status(f"Running all 4 algorithms on {self._size}×{self._size}…")
+        self._sidebar.set_solving(True)
 
         def _run():
             results = {}
@@ -152,26 +176,28 @@ class App(tk.Tk):
         threading.Thread(target=_run, daemon=True).start()
 
     def _finish_solve_all(self, results):
+        self._sidebar.set_solving(False)
+
         def _view(result):
             self._last_result = result
-            self._sidebar.update_stats(result)
+            self._sidebar.update_stats(result, size=self._size)
             self._grid.load_puzzle(self._puzzle, self._given)
             self._start_animator(result)
 
-        CompareWindow(self, results, on_view=_view)
+        CompareWindow(self, results, on_view=_view, grid_size=self._size)
 
     def _on_manual(self):
         self._stop_animator()
         self._given = set()
-        self._puzzle = [[0]*9 for _ in range(9)]
+        self._puzzle = [[0]*self._size for _ in range(self._size)]
         self._grid.clear_board()
         self._grid.unlock_all()
-        self._status("Manual entry — type digits into cells, then press Solve & Animate.")
+        self._status(f"Manual entry ({self._size}×{self._size}) — type digits, then Solve & Animate.")
 
     def _on_clear(self):
         self._stop_animator()
         self._given = set()
-        self._puzzle = [[0]*9 for _ in range(9)]
+        self._puzzle = [[0]*self._size for _ in range(self._size)]
         self._grid.clear_board()
         self._sidebar.update_progress(0, 0)
         self._status("Board cleared.")
@@ -194,7 +220,7 @@ class App(tk.Tk):
         if self._animator:
             self._animator.set_delay(delay_ms)
 
-    # ── animator management ───────────────────────────────────────────────────
+    # ── animator ──────────────────────────────────────────────────────────────
 
     def _start_animator(self, result):
         delay = self._sidebar.get_delay()
@@ -218,13 +244,9 @@ class App(tk.Tk):
 
     def _on_anim_done(self):
         self._sidebar.set_play_state(False)
-        self._sidebar.update_progress(
-            self._last_result["steps"].__len__() if self._last_result else 0,
-            self._last_result["steps"].__len__() if self._last_result else 0,
-        )
+        steps = len(self._last_result["steps"]) if self._last_result else 0
+        self._sidebar.update_progress(steps, steps)
         self._status("✓ Animation complete.")
-
-    # ── misc ──────────────────────────────────────────────────────────────────
 
     def _status(self, msg):
         self._status_var.set(msg)
